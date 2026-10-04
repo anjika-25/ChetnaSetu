@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sahayak – Sign in</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/static/style.css"></head><body>
+<div class="top"><b class="brand">🛡️ Sahayak <small id="rl"></small></b>
+ <label id="lw" class="row" style="gap:4px;color:#fff" hidden>🌐 <select id="lang" onchange="setUILang(this.value)"></select></label></div>
+<div class="card login"><h3 data-i18n="sign_in">Sign in</h3>
+ <div id="s1"><small data-i18n="user_id">User ID</small><input id="u" autofocus><small data-i18n="password">Password</small><input id="p" type="password" onkeydown="if(event.key=='Enter')step1()">
+  <button class="btn p" onclick="step1()" data-i18n="continue">Continue</button></div>
+ <div id="s2" hidden><small id="hint"></small><input id="o" data-i18n-ph="otp_ph" placeholder="6-digit OTP" maxlength="6" onkeydown="if(event.key=='Enter')step2()">
+  <button class="btn p" onclick="step2()" data-i18n="verify">Verify and sign in</button></div>
+ <p id="err" style="color:#b91c1c"></p>
+ <div class="res warn"><small id="demo"></small></div></div>
+<script src="/static/i18n.js"></script>
+<script>
+const role=location.pathname.startsWith('/admin')?'admin':'user';let tmp;const EM={'Invalid ID or password':'err_login','Invalid OTP':'err_otp'};
+const msg=e=>role=='user'&&EM[e]?t(EM[e]):e;
+if(role=='admin'){lw.remove();rl.innerText='Admin console';demo.innerHTML='Demo login: <b>admin</b> / <b>Admin@123</b> (OTP 123456)'}
+else{lw.hidden=false;lang.innerHTML=langOptions();const L=localStorage.getItem('sahayak_lang')||'en';lang.value=L;
+ demo.innerHTML='Demo login: <b>SAH-1001</b> … <b>SAH-1008</b> / <b>Demo@123</b> (OTP 654321)';
+ window.onLang=()=>{rl.textContent=t('brand_sub');lang.value=CUR};setUILang(L)}
+async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});const j=await r.json();if(!r.ok)throw j.detail;return j}
+async function step1(){try{const j=await post('/api/login',{role,uid:u.value.trim(),password:p.value});tmp=j.tmp;hint.innerText=role=='user'?t('otp_sent'):j.hint;s1.hidden=true;s2.hidden=false;err.innerText='';o.focus()}catch(e){err.innerText=msg(e)}}
+async function step2(){try{await post('/api/otp',{tmp,otp:o.value.trim()});location.reload()}catch(e){err.innerText=msg(e)}}
+</script></body></html>

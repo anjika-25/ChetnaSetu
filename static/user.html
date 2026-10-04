@@ -1,0 +1,102 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sahayak</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/static/style.css"></head><body>
+<div class="top"><b class="brand">🛡️ Sahayak <small data-i18n="brand_sub">Beneficiary portal</small></b>
+ <div class="row"><span id="ai" class="pill"><i></i>…</span>
+  <label id="langsel" class="row" style="gap:4px;color:#fff">🌐 <select id="lang" onchange="changeLang(this.value)"></select></label>
+  <button class="btn ghost" onclick="tourStart()" data-i18n="tour_btn">Tour</button><button class="btn ghost" onclick="logout('user')" data-i18n="logout">Logout</button></div></div>
+<div id="aibanner" class="banner" hidden></div>
+<div id="mtnote" class="banner" style="background:#fffbeb;color:#92400e;border-color:#f59e0b" hidden>🌐 Interface translated automatically; it may contain mistakes.</div>
+<main class="grid"><div>
+ <div class="card"><h3 id="who"></h3><small data-i18n="check_prompt">How would you like to check in today? Choose one:</small><br><br><div class="opts" id="opts"></div></div>
+ <div class="card" id="fc" hidden><div id="form"></div><div id="res"></div></div>
+</div><div>
+ <div class="card" id="histcard"><h3 data-i18n="hist_title">My check-in history</h3><div id="hist" class="scroll"></div><small data-i18n="hist_note">Every entry is sealed so it cannot be changed later.</small></div>
+ <div class="card" id="calmcard"><h3>🌿 <span data-i18n="calm_title">Calm corner</span></h3><small data-i18n="calm_sub">Anytime you feel overwhelmed:</small>
+  <div class="row" style="margin-top:8px"><button class="btn" onclick="openCalm('breathe')" data-i18n="calm_breathe">Box breathing</button><button class="btn" onclick="openCalm('ground')" data-i18n="calm_ground">5-4-3-2-1 grounding</button></div></div>
+ <div class="card" id="helpcard"><small data-i18n="help_line">Need help now? NHAA helpline 14566 · Emergency 112 · Tele-MANAS 14416. You are not alone.</small></div>
+</div></main>
+<div id="calm" class="overlay" hidden><div class="card" style="width:min(420px,92vw);text-align:center"><div id="cbody"></div><button class="btn" onclick="closeCalm()" data-i18n="close">Close</button></div></div>
+<div id="tblock" class="overlay" style="background:transparent;z-index:59" hidden></div><div id="tspot" class="tspot" hidden></div><div id="ttip" class="ttip" hidden></div>
+<script>window.userMode=true</script>
+<script src="/static/common.js"></script><script src="/static/i18n.js"></script>
+<script>
+let ch=null,chat=[],busy=false,gen=0,calmTok=0,ti=0;const W={sleep:0,appetite:0,mood:0},FACES=['😞','😕','😐','🙂','😊'];
+const OPT=[['chatbot','💬','opt_chat'],['ivrs','📞','opt_ivrs'],['sms','✉️','opt_sms'],['wellness','🌙','opt_well'],['missed','⏭️','opt_missed']];
+const TOUR=[['#opts','tour_opts'],['#o_wellness','tour_well'],['#langsel','tour_lang'],['#histcard','tour_hist'],['#calmcard','tour_calm'],['#helpcard','tour_help']];
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const fmtL=x=>{if(!x)return'–';const o={day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'};try{return new Date(x).toLocaleString(['auto','hx','en'].includes(CUR)?'en-IN':CUR+'-IN',o)}catch(e){return new Date(x).toLocaleString('en-IN',o)}};
+function renderOpts(){opts.innerHTML=OPT.map(o=>`<div class="opt${ch==o[0]?' on':''}" id="o_${o[0]}" onclick="pick('${o[0]}')">${o[1]}<b>${t(o[2])}</b><small>${t(o[2]+'_s')}</small></div>`).join('')}
+const crisisHTML=()=>`<div class="crisis">🆘 ${t('crisis')}</div>`;
+const copeBtn=()=>`🌿 ${t('calm_offer')} <button class="btn" onclick="openCalm('breathe')">${t('calm_breathe')}</button> <button class="btn" onclick="openCalm('ground')">${t('calm_ground')}</button>`;
+function bubble(cls,x){const d=document.createElement('div');d.className='m '+cls;d.textContent=x;$('#cb').append(d);$('#cb').scrollTop=1e9;return d}
+function bubbleHTML(cls,h){const d=document.createElement('div');d.className='m '+cls;d.innerHTML=h;$('#cb').append(d);$('#cb').scrollTop=1e9;return d}
+async function typeOut(el,text,g){const w=text.split(/(\s+)/);el.textContent='';el.classList.add('cur');
+ for(const x of w){if(g!==undefined&&g!==gen)return;el.textContent+=x;const cb=$('#cb');if(cb)cb.scrollTop=1e9;await sleep(/\s/.test(x)?0:45)}el.classList.remove('cur')}
+const chipRow=(k,label)=>`<div style="margin:8px 0"><small>${label}</small><div class="row">${FACES.map((f,i)=>`<button type="button" class="chip" id="c_${k}_${i+1}" onclick="setW('${k}',${i+1})">${f}</button>`).join('')}</div></div>`;
+function setW(k,v){W[k]=v;for(let i=1;i<=5;i++)$('#c_'+k+'_'+i).classList.toggle('on',i==v)}
+async function pick(c){ch=c;chat=[];gen++;const g=gen;fc.hidden=false;res.innerHTML='';renderOpts();
+ if(c=='chatbot'){form.innerHTML=`<div class="chat" id="cb"></div><div class="row"><input id="cm" style="flex:1" placeholder="${t('chat_ph')}" onkeydown="if(event.key=='Enter')sendChat()"><button class="btn p" onclick="sendChat()">${t('send')}</button></div>`;
+  busy=true;const w=bubble('b','');w.classList.add('typing');await sleep(700);if(g!==gen)return;w.classList.remove('typing');
+  const gr=await api('/api/user/greeting');const hi=gr?gr.text:'Namaste 🙏';await typeOut(w,hi,g);if(g!==gen)return;chat.push({role:'assistant',content:hi});busy=false;$('#cm').focus()}
+ else if(c=='missed')form.innerHTML=`<p>${t('missed_text')}</p><button class="btn p" onclick="submit('missed','',0)">${t('missed_btn')}</button>`;
+ else if(c=='wellness'){W.sleep=W.appetite=W.mood=0;form.innerHTML=`<b>${t('well_title')}</b>${chipRow('sleep',t('well_sleep'))}${chipRow('appetite',t('well_app'))}${chipRow('mood',t('well_mood'))}<small>${t('well_note')}</small><textarea id="wn" rows="2"></textarea><button class="btn p" onclick="sendWell()">${t('well_btn')}</button>`}
+ else form.innerHTML=`<small>${c=='ivrs'?t('ivrs_label'):t('sms_label')}</small><textarea id="tx" rows="3"></textarea>`+
+  (c=='ivrs'?`<small>${t('voice_label')}: <b id="vv">0.3</b></small><input type="range" id="vs" min="0" max="1" step="0.1" value="0.3" oninput="vv.innerText=this.value">`:'')+`<button class="btn p" onclick="go()">${t('send')}</button>`}
+function go(){const x=$('#tx').value.trim();if(x)submit(ch,x,ch=='ivrs'?+$('#vs').value:0)}
+async function sendChat(){const i=$('#cm'),x=i.value.trim();if(!x||busy)return;i.value='';busy=true;bubble('u',x);
+ const w=bubble('b','');w.classList.add('typing');let reply='',meta=null;
+ try{const r=await fetch('/api/user/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:'chatbot',text:x,voice_stress:0,history:chat})});
+  if(r.status==401){location.reload();return}
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
+  for(;;){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let k;
+   while((k=buf.indexOf('\n\n'))>=0){const ev=buf.slice(0,k);buf=buf.slice(k+2);if(!ev.startsWith('data:'))continue;const j=JSON.parse(ev.slice(5));
+    if(j.t){reply+=j.t;w.classList.remove('typing');w.textContent=reply;$('#cb').scrollTop=1e9}if(j.done)meta=j}}
+ }catch(e){meta={ai_ok:false}}
+ w.classList.remove('typing');if(!reply)w.textContent='…';chat.push({role:'user',content:x},{role:'assistant',content:reply});
+ if(meta&&!meta.ai_ok)bubble('s','⚠ '+t('ai_down'));if(meta&&meta.alerted)bubble('s','🔔 '+t('informed'));
+ if(meta&&meta.crisis)bubbleHTML('s',crisisHTML());else if(meta&&meta.coping)bubbleHTML('b',copeBtn());
+ busy=false;loadHist();$('#cm').focus()}
+function showRes(r){res.innerHTML=`<div class="res ${r.ai_ok===false?'warn':''}"><span id="rt"></span><br><small>${r.alerted?'🔔 '+t('informed')+'<br>':''}${r.ai_ok===false?'⚠ '+t('ai_down')+'<br>':''}⛓ ${t('recorded',{n:r.blk})} · <code>${r.hash.slice(0,12)}…</code></small></div>${r.crisis?crisisHTML():r.coping?`<div class="res" style="background:#eef2ff;border-color:#c7d2fe">${copeBtn()}</div>`:''}`;typeOut($('#rt'),r.reply);loadHist()}
+async function submit(channel,text,voice){res.innerHTML=`<span class="spin"></span> ${t('working')}`;
+ const r=await api('/api/user/checkin',{channel,text,voice_stress:voice,history:[]});if(!r)return;showRes(r)}
+async function sendWell(){if(!W.sleep||!W.appetite||!W.mood){res.innerHTML=`<small style="color:#b91c1c">${t('well_pick')}</small>`;return}
+ res.innerHTML=`<span class="spin"></span> ${t('working')}`;const r=await api('/api/user/wellness',{sleep:W.sleep,appetite:W.appetite,mood:W.mood,note:$('#wn').value});if(!r)return;showRes(r)}
+function closeCalm(){calmTok++;calm.hidden=true}
+const coped=k=>api('/api/user/coping',{kind:k});
+async function openCalm(kind){calm.hidden=false;const tk=++calmTok;
+ if(kind=='breathe'){cbody.innerHTML=`<h3>${t('bx_title')}</h3><div class="breath" id="bc"></div><p id="bl" style="font-size:20px;font-weight:600">${t('bx_ready')}</p><small id="bn"></small>`;await sleep(1200);
+  for(let c=1;c<=4;c++)for(const [lab,sc,sec] of [['bx_in',1,4],['bx_hold',1,4],['bx_out',.55,4],['bx_hold',.55,4]]){if(tk!=calmTok)return;
+   const el=$('#bc');$('#bn').textContent=t('bx_round',{c});el.style.transition=`transform ${sec}s ease-in-out`;el.style.transform=`scale(${sc})`;
+   for(let s=sec;s>0;s--){if(tk!=calmTok)return;$('#bl').textContent=t(lab)+' · '+s;await sleep(1000)}}
+  if(tk==calmTok){$('#bl').textContent=t('bx_done');coped('breathing')}}
+ else{let i=1;const draw=()=>{cbody.innerHTML=`<h3>${t('gr_title')}</h3><div style="font-size:64px">${['👀','✋','👂','👃','👅'][i-1]}</div><p style="font-size:20px">${t('gr_'+i)}</p><button class="btn p" onclick="gnext()">${i<5?t('next'):t('finish')}</button>`};
+  window.gnext=()=>{if(++i<=5)draw();else{cbody.innerHTML=`<h3>🙏</h3><p>${t('gr_done')}</p>`;coped('grounding')}};draw()}}
+async function loadHist(){const d=await api('/api/user/me');if(!d)return;const v=d.victim;
+ who.innerHTML=`${t('hello')}, <b>${v.id}</b> <small>· ${t('case_line',{district:v.district,stage:EN['stage_'+v.stage]?t('stage_'+v.stage):v.stage,hearing:v.hearing})}</small>`;
+ hist.innerHTML=d.history.map(k=>`<div class="ev" style="--c:#818cf8"><b>${fmtL(k.ts)}</b> · ${k.channel}<div>${esc(k.text)||'—'}</div><small>⛓ #${k.blk} <code>${(k.hash||'').slice(0,12)}</code></small></div>`).join('')}
+/* ---- first-login welcome + guided tour ---- */
+function welcome(){const o=document.createElement('div');o.id='welcome';o.className='overlay';o.style.zIndex=70;
+ o.innerHTML=`<div class="card" style="width:min(520px,94vw);text-align:center"><h3>🛡️ Sahayak</h3><p style="font-size:18px;font-weight:600">Choose your language · भाषा चुनें · ভাষা বেছে নিন · ਭਾਸ਼ਾ ਚੁਣੋ · மொழியைத் தேர்ந்தெடுக்கவும்</p>
+ <div class="row" style="justify-content:center;margin:12px 0">${['en','hi','bn','pa','ta'].map(c=>`<button class="btn p" onclick="pickWelcome('${c}')">${LANGS[c].split(' · ')[0]}</button>`).join('')}</div>
+ <select style="width:100%" onchange="if(this.value)pickWelcome(this.value)"><option value="">… 22 + English</option>${Object.entries(LANGS).filter(([k])=>!['auto','hx'].includes(k)).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>`;document.body.append(o)}
+async function pickWelcome(c){const w=$('#welcome');if(w)w.remove();await changeLang(c);tourStart()}
+function tourStart(){ti=0;$('#tblock').hidden=false;tourShow()}
+function tourShow(){const [sel,key]=TOUR[ti],el=$(sel);if(!el){tourGo(1);return}
+ el.scrollIntoView({block:'center',behavior:'smooth'});
+ setTimeout(()=>{const r=el.getBoundingClientRect(),sp=$('#tspot'),tp=$('#ttip');sp.hidden=tp.hidden=false;
+  sp.style.cssText=`left:${r.left-6}px;top:${r.top-6}px;width:${r.width+12}px;height:${r.height+12}px`;
+  tp.innerHTML=`<small>${t('tour_step',{i:ti+1,n:TOUR.length})}</small><p style="margin:6px 0 10px;font-size:15px">${t(key)}</p><div class="row" style="justify-content:space-between"><button class="btn" onclick="tourEnd()">${t('tour_skip')}</button><span>${ti?`<button class="btn" onclick="tourGo(-1)">${t('tour_back')}</button> `:''}<button class="btn p" onclick="tourGo(1)">${ti==TOUR.length-1?t('finish'):t('next')}</button></span></div>`;
+  const th=tp.offsetHeight,tw=tp.offsetWidth;let top=r.bottom+16;if(top+th>innerHeight-10)top=Math.max(10,r.top-th-16);
+  tp.style.top=top+'px';tp.style.left=Math.min(Math.max(10,r.left),Math.max(10,innerWidth-tw-10))+'px'},380)}
+function tourGo(d){ti+=d;if(ti>=TOUR.length)tourEnd();else tourShow()}
+function tourEnd(){$('#tspot').hidden=$('#ttip').hidden=$('#tblock').hidden=true;api('/api/user/tour',{})}
+addEventListener('resize',()=>{if(!$('#ttip').hidden)tourShow()});
+async function changeLang(v){await setUILang(v);await api('/api/user/lang',{lang:v});if(ch=='chatbot')pick('chatbot')}
+window.onLang=()=>{lang.value=CUR;renderOpts();loadHist();aiPill();if(ch&&ch!='chatbot')pick(ch)};
+async function init(){lang.innerHTML=langOptions();renderOpts();
+ const d=await api('/api/user/me');if(!d)return;const v=d.victim;
+ let L=(v.lang&&v.lang!='auto')?v.lang:(localStorage.getItem('sahayak_lang')||'en');if(!v.toured)L='en';     // first login always starts with the language chooser
+ await setUILang(L);if(v.toured&&v.lang=='auto'&&L!='en')api('/api/user/lang',{lang:L});
+ if(!v.toured)welcome()}
+init();
+</script></body></html>

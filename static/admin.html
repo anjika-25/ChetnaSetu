@@ -1,0 +1,77 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Sahayak – Admin</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/static/style.css"></head><body>
+<div class="top"><b class="brand">🛡️ Sahayak <small>Admin console</small></b>
+ <div class="row"><span id="ai" class="pill"><i></i>checking AI…</span><span id="ig" class="pill"><i></i>ledger…</span>
+ <button class="btn ghost" onclick="resetDemo()">↺ Reset demo session</button><button class="btn ghost" onclick="logout('admin')">Logout</button></div></div>
+<div id="aibanner" class="banner" hidden></div>
+<main class="grid"><div>
+ <div class="card"><div class="kpis" id="kpi"></div></div>
+ <div class="card"><div class="row" style="justify-content:space-between"><h3>Case priority queue</h3>
+  <div class="filters"><select id="st" onchange="ds.innerHTML='';fillF();render()"><option value="">National</option></select><select id="ds" onchange="render()"></select></div></div>
+  <table id="tbl"></table></div>
+ <div class="card"><h3>Case detail</h3><div id="det"><small>Select a case to see its full history.</small></div></div>
+</div><div>
+ <div class="card"><div class="row" style="justify-content:space-between"><h3>🔔 Alerts &amp; SLA <small id="acount"></small></h3>
+  <select id="actas" style="width:auto"><option value="counsellor">Act as: Counsellor</option><option value="district_official">Act as: District official</option><option value="state_official">Act as: State official</option></select></div>
+  <div id="alerts" class="scroll" style="max-height:330px"></div><div id="aud"></div></div>
+ <div class="card"><h3>Live activity timeline <small>(every check-in)</small></h3><div id="feed" class="scroll"></div></div>
+ <div class="card"><h3>⛓ Integrity ledger</h3><small>Check-ins <b>and every alert action</b> are sealed in a SHA-256 hash chain. Editing or deleting any record breaks it.</small>
+  <div class="row" style="margin:10px 0"><button class="btn p" onclick="verify()">Verify integrity</button><button class="btn d" onclick="tamper()">Simulate tampering</button></div>
+  <div id="vr"></div><div id="lg" class="scroll" style="max-height:240px"></div></div>
+</div></main>
+<script src="/static/common.js"></script>
+<script>
+let cs=[],sel=null;
+const fmtS=s=>`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+async function load(){cs=await api('/api/admin/cases');if(!cs)return;fillF();render();feed();ledger();alertsPanel();verify(true);if(sel)show(sel)}
+function fillF(){if(st.options.length==1)[...new Set(cs.map(c=>c.state))].sort().forEach(x=>st.add(new Option(x,x)));
+ const cur=ds.value;ds.innerHTML='<option value="">All districts</option>'+[...new Set(cs.filter(c=>!st.value||c.state==st.value).map(c=>c.district))].sort().map(d=>`<option ${d==cur?'selected':''}>${d}</option>`).join('')}
+function render(){const f=cs.filter(c=>(!st.value||c.state==st.value)&&(!ds.value||c.district==ds.value)),n=l=>f.filter(c=>c.level==l).length;
+ kpi.innerHTML=['critical','high','watch','moderate','low'].map(l=>`<div class="kpi" style="--c:${C[l]}"><b>${n(l)}</b><span>${l}</span></div>`).join('')+`<div class="kpi" style="--c:#475569"><b>${f.length}</b><span>monitored</span></div>`;
+ tbl.innerHTML='<tr><th>ID<th>Category<th>District<th>Stage<th>Risk<th>Distress / Safety<th>Trend→proj.<th>Level<th>Last check-in</tr>'+f.map(c=>`<tr class="r" onclick="show('${c.id}')"><td><b>${c.id}</b><td>${c.category}<td>${c.district}, ${c.state}<td>${c.stage}<td><b>${(c.score||0).toFixed(0)}</b><td><small>D ${c.distress==null?'–':Math.round(c.distress)} · S ${c.safety==null?'–':Math.round(c.safety)}</small><td>${c.slope>1?'▲':c.slope<-1?'▼':'►'} ${(c.pred||0).toFixed(0)}<td>${badge(c.level)}<td><small>${fmt(c.ts)}</small></tr>`).join('')}
+async function show(id){sel=id;const d=await api('/api/admin/victim/'+id);if(!d)return;const h=d.history,L=h[h.length-1];if(!L)return;
+ const W=520,H=150,x=i=>20+i*(W-70)/Math.max(1,h.length-1),y=s=>H-14-s*(H-24)/100,pts=h.map((k,i)=>`${x(i)},${y(k.score)}`).join(' ');
+ const line=(key,col)=>h.every(k=>k[key]!=null)?`<polyline fill="none" stroke="${col}" stroke-width="1.5" stroke-dasharray="2 3" points="${h.map((k,i)=>`${x(i)},${y(k[key])}`).join(' ')}"/>`:'';
+ const svg=`<svg viewBox="0 0 ${W} ${H+14}" width="100%"><line x1="0" x2="${W}" y1="${y(60)}" y2="${y(60)}" stroke="#ea580c" stroke-dasharray="4"/><line x1="0" x2="${W}" y1="${y(80)}" y2="${y(80)}" stroke="#b91c1c" stroke-dasharray="4"/>
+ ${line('distress','#7c3aed')}${line('safety','#dc2626')}<polyline fill="none" stroke="#1e40af" stroke-width="2.5" points="${pts}"/>${h.map((k,i)=>`<circle cx="${x(i)}" cy="${y(k.score)}" r="4" fill="${C[k.level]}"><title>${fmt(k.ts)} · ${k.score.toFixed(0)}</title></circle>`).join('')}
+ <line x1="${x(h.length-1)}" y1="${y(L.score)}" x2="${x(h.length-1)+35}" y2="${y(L.pred)}" stroke="#b91c1c" stroke-dasharray="3"/>
+ <text x="4" y="${H+10}" font-size="10" fill="#64748b">${fmt(h[0].ts)}</text><text x="${W-90}" y="${H+10}" font-size="10" fill="#64748b">${fmt(L.ts)}</text></svg>`;
+ const P=L.parts.d?L.parts:{d:L.parts,s:{},why:[]};
+ const bars=o=>{const m=Math.max(...Object.values(o),1);return Object.entries(o).map(([k,v])=>`<div>${k} <small>+${v}</small><div class="bar"><i style="width:${v/m*100}%"></i></div></div>`).join('')||'<small>–</small>'};
+ const cl=L.conf>=75?['High','#16a34a']:L.conf>=50?['Medium','#ca8a04']:['Low','#dc2626'];
+ const stat=(t,v,c)=>`<div class="kpi" style="--c:${c}"><b>${v==null?'–':Math.round(v)}</b><span>${t}</span></div>`;
+ const pv=h.length>1?Math.round(h[h.length-2].distress??h[h.length-2].score):'–';
+ det.innerHTML=`<b>${id}</b> · ${d.victim.category} · ${d.victim.district} · next hearing ${d.victim.hearing} ${badge(L.level)} <small>(${h.length} check-ins)</small>${d.victim.toured?'':' <small class="mut">🆕 first login pending</small>'}${svg}
+ <small>Solid = overall risk (higher of the two) · dotted purple = distress · dotted red = physical safety · dashed red = 2-step projection</small>
+ <div class="kpis" style="grid-template-columns:repeat(3,1fr);margin:10px 0">${stat('Psychological distress',L.distress,'#7c3aed')}${stat('Physical-safety risk',L.safety,'#dc2626')}<div class="kpi" style="--c:${cl[1]}"><b>${L.conf==null?'–':Math.round(L.conf)+'%'}</b><span>Confidence: ${cl[0]}</span></div></div>
+ <h4>Distress breakdown <small>(latest, ${fmt(L.ts)})</small></h4><small>Distress ${L.distress==null?'–':Math.round(L.distress)} = 0.6 × this check-in's raw ${Math.round(L.raw)} + 0.4 × previous distress ${pv}</small>${bars(P.d)}
+ <h4>Physical-safety breakdown</h4><small>Decays slowly: never drops below half the previous value</small>${bars(P.s)}
+ <h4>Why this confidence?</h4><ul>${(P.why||[]).map(w=>`<li>${esc(w)}`).join('')||'<li>–'}</ul>
+ <h4>Recommended interventions</h4><ul>${d.victim.recs.map(r=>`<li>${esc(r)}`).join('')}</ul>${d.victim.coping?`<small>🌿 ${d.victim.coping} calming exercise(s) completed by the beneficiary</small>`:''}
+ <h4>Full check-in history</h4><div class="scroll"><table><tr><th>When<th>Channel<th>Message<th>AI reply (audit)<th>Score<th>Level<th>Engine<th>Ledger</tr>${h.slice().reverse().map(k=>`<tr><td><small>${fmt(k.ts)}</small><td>${k.channel}<td>${esc(k.text).slice(0,60)}${k.text_en?` <small class="mut" title="${esc(k.text_en)}">🌐 ${k.lang} → EN: ${esc(k.text_en).slice(0,50)}</small>`:''}<td>${k.reply?`<small class="mut">${({curated:'🛡 curated','curated-mt':'🛡🌐 curated · machine-translated',model:'🤖 model '+(k.prompt_ver||''),'model-mt':'🤖🌐 model + MT '+(k.prompt_ver||''),fallback:'⚠ fallback',system:'⚙ system'})[k.reply_src]||''}</small><br><span title="${esc(k.reply)}${k.reply_en?' — EN: '+esc(k.reply_en):''}">${esc(k.reply).slice(0,110)}</span>`:'<small class="mut">—</small>'}<td>${k.score.toFixed(0)} <small>(D${Math.round(k.distress??k.score)} · S${Math.round(k.safety??0)})</small><td>${badge(k.level)}<td>${k.engine.startsWith('qwen')?'🤖 AI':k.engine.startsWith('seed')||k.engine=='self-report'?k.engine:'⚠ '+esc(k.engine)}<td><code>#${k.blk} ${(k.hash||'').slice(0,8)}</code></tr>`).join('')}</table></div>`}
+async function alertsPanel(){const r=await api('/api/admin/alerts');if(!r)return;
+ acount.innerHTML=`${r.open} open${r.overdue?` · <b style="color:#dc2626">${r.overdue} overdue</b>`:''}`;
+ alerts.innerHTML=r.active.map(a=>`<div class="ev" style="--c:${C[a.level]}"><div><b>${a.vid}</b> ${badge(a.level)} <small>→ ${a.to_role.replace('_',' ')}</small> <span class="sla" data-d="${Date.now()+a.remaining*1000}" data-s="${a.status}"></span></div>
+  <div class="mut">${esc(a.reason).slice(0,120)}</div><div class="row" style="margin-top:4px">${a.status=='ack'?`<small>✔ acknowledged by ${a.ack_by.replace('_',' ')}</small>`:`<button class="btn" onclick="act(${a.id},'ack')">Acknowledge</button>`}
+  <button class="btn" onclick="act(${a.id},'resolve')">Resolve</button><button class="btn d" onclick="act(${a.id},'override')">Override</button>${a.status=='open'?`<button class="btn" title="Demo: simulate an SLA breach" onclick="ff(${a.id})">⏩ Simulate breach</button>`:''}</div></div>`).join('')||'<small>No active alerts 🎉</small>';
+ aud.innerHTML=r.events.length?'<h4>Audit trail <small>(each action sealed on the ledger)</small></h4>'+r.events.map(e=>`<div class="blk"><b>${esc(e.action)}</b> · alert #${e.alert_id} · ${esc(e.actor)} · <small>${fmt(e.ts)}</small>${e.note?`<br><small>${esc(e.note).slice(0,120)}</small>`:''}</div>`).join(''):'';tick()}
+function tick(){document.querySelectorAll('.sla').forEach(e=>{const s=Math.round((+e.dataset.d-Date.now())/1000);if(e.dataset.s=='ack'){e.textContent='';return}
+ e.className='sla'+(s<0?' overdue':'');e.textContent=s<0?`⏰ OVERDUE ${fmtS(-s)}`:`⏱ ${fmtS(s)} left`})}
+setInterval(tick,1000);
+async function act(id,action){let note='';if(action!='ack'){note=prompt(action=='override'?'Override / dismiss this alert. A justification is mandatory (min 10 characters):':'Action taken (min 10 characters):');if(note===null)return}
+ const r=await fetch('/api/admin/alert/'+id+'/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,note,role:actas.value})});
+ if(!r.ok){const j=await r.json();toast(j.detail||'Failed');return}load()}
+function toast(m){const d=document.createElement('div');d.textContent=m;d.style.cssText='position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:10px 18px;border-radius:10px;z-index:99;box-shadow:0 4px 14px #0004';document.body.append(d);setTimeout(()=>d.remove(),4000)}
+async function ff(id){try{const r=await api('/api/admin/fastforward',{id});if(!r)return;toast(`⏩ SLA breach simulated — it turns OVERDUE now and escalates in ${r.grace}s`);load()}catch(e){toast('Fast-forward failed: '+e)}}
+async function feed(){const a=await api('/api/admin/feed');if(!a)return;
+ $('#feed').innerHTML=a.map(x=>`<div class="ev" style="--c:${C[x.level]}" onclick="show('${x.vid}')"><div><b>${x.vid}</b> ${badge(x.level)} <small>${fmt(x.ts)} · ${x.channel}</small></div><div class="mut">${x.text?'“'+esc(x.text).slice(0,70)+'”':'—'}</div>${x.routed?`<div class="al">🔔 Alert → ${x.routed.replace(/,/g,', ')}</div>`:''}</div>`).join('')}
+async function ledger(){const b=await api('/api/admin/ledger');if(!b)return;
+ $('#lg').innerHTML=b.map(x=>`<div class="blk"><b>Block #${x.idx}</b> · ${x.kind} · <small>${fmt(x.ts)}</small><br><code>${x.hash.slice(0,24)}…</code> <small>← ${x.prev.slice(0,8)}…</small></div>`).join('')}
+async function verify(quiet){const r=await api('/api/admin/verify');if(!r)return;
+ ig.className='pill '+(r.ok?'ok':'bad');ig.innerHTML=r.ok?`<i></i>⛓ Ledger intact · ${r.blocks} blocks`:`<i></i>⛓ TAMPERING DETECTED`;
+ vr.innerHTML=r.ok?(quiet?'':'<div class="res">✅ All blocks and records verified — no tampering.</div>'):`<div class="res warn" style="background:#fef2f2;border-color:#fca5a5">🚨 <b>${r.issues.length} integrity violation(s)</b><ul>${r.issues.map(i=>`<li>Block #${i.idx}: ${esc(i.msg)}`).join('')}</ul></div>`}
+async function tamper(){if(!confirm('Silently edit the highest-risk record in the database (bypassing the ledger)?'))return;await api('/api/admin/tamper',{});await load();verify()}
+async function resetDemo(){if(!confirm('Reset everything to a fresh demo state? Every account is also set back to unopened, so the next login shows the first-time tour.'))return;await api('/api/admin/reset',{});sel=null;det.innerHTML='<small>Select a case.</small>';vr.innerHTML='';load()}
+load();setInterval(load,3000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)load()});   // refresh instantly when you switch back to this tab
+</script></body></html>
